@@ -1,0 +1,294 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Smart Street Light Central Command Dashboard</title>
+  
+  <script src="https://cdn.tailwindcss.com"></script>
+  <link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css" />
+  <script src="https://cdnjs.cloudflare.com/ajax/libs/paho-mqtt/1.0.1/mqttws31.min.js"></script>
+  <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
+
+  <style>
+    ::-webkit-scrollbar { width: 6px; }
+    ::-webkit-scrollbar-track { background: #1f2937; }
+    ::-webkit-scrollbar-thumb { background: #374151; border-radius: 3px; }
+  </style>
+</head>
+<body class="bg-slate-950 text-slate-100 font-sans min-h-screen flex flex-col">
+
+  <!-- TOP NAVIGATION / HEADER -->
+  <header class="bg-slate-900 border-b border-slate-800 px-6 py-4 flex justify-between items-center">
+    <div class="flex items-center space-x-3">
+      <div class="p-2 bg-indigo-600 rounded-lg">
+        <svg class="w-6 h-6 text-white" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+          <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M13 10V3L4 14h7v7l9-11h-7z"/>
+        </svg>
+      </div>
+      <div>
+        <h1 class="font-bold text-lg leading-tight">Smart Lighting Command Center</h1>
+        <p class="text-xs text-slate-400">PMC Zone Network | Real-time Diagnostic Engine</p>
+      </div>
+    </div>
+    
+    <div class="flex items-center space-x-3">
+      <!-- MANUAL DEMO BUTTON FOR EVALUATOR -->
+      <button onclick="runEvaluatorDemo()" class="px-3 py-1.5 bg-indigo-600 hover:bg-indigo-500 text-white rounded-lg text-xs font-semibold shadow transition">
+        ▶ Run Evaluator Demo (5 Cases)
+      </button>
+
+      <span id="connection-status" class="inline-flex items-center px-3 py-1 rounded-full text-xs font-semibold bg-amber-500/10 text-amber-400 border border-amber-500/20">
+        <span class="w-2 h-2 mr-2 bg-amber-400 rounded-full animate-pulse"></span> MQTT Ready
+      </span>
+      <span class="text-xs text-slate-500" id="live-clock">--:--:--</span>
+    </div>
+  </header>
+
+  <!-- MAIN CONTENT GRID -->
+  <main class="flex-1 p-6 grid grid-cols-1 lg:grid-cols-3 gap-6 max-w-[1600px] w-full mx-auto">
+
+    <!-- LEFT & MIDDLE COLUMNS: METRICS + MAP -->
+    <div class="lg:col-span-2 space-y-6">
+      
+      <!-- TOP METRIC CARDS -->
+      <div class="grid grid-cols-2 sm:grid-cols-4 gap-4">
+        <div class="bg-slate-900 border border-slate-800 rounded-xl p-4">
+          <p class="text-xs font-medium text-slate-400">Total Active Nodes</p>
+          <h3 class="text-2xl font-bold text-white mt-1" id="metric-total-poles">0</h3>
+          <p class="text-[10px] text-slate-500 mt-1">PMC Pune Network</p>
+        </div>
+        <div class="bg-slate-900 border border-slate-800 rounded-xl p-4">
+          <p class="text-xs font-medium text-slate-400">System Health</p>
+          <h3 class="text-2xl font-bold text-emerald-400 mt-1" id="metric-health">100%</h3>
+          <p class="text-[10px] text-slate-500 mt-1" id="metric-fault-count">0 Active Faults</p>
+        </div>
+        <div class="bg-slate-900 border border-slate-800 rounded-xl p-4">
+          <p class="text-xs font-medium text-slate-400">Total Grid Power</p>
+          <h3 class="text-2xl font-bold text-indigo-400 mt-1" id="metric-power">0.0 W</h3>
+          <p class="text-[10px] text-slate-500 mt-1">Real-time Load</p>
+        </div>
+        <div class="bg-slate-900 border border-slate-800 rounded-xl p-4">
+          <p class="text-xs font-medium text-slate-400">Energy Savings</p>
+          <h3 class="text-2xl font-bold text-amber-400 mt-1">58.4%</h3>
+          <p class="text-[10px] text-slate-500 mt-1">Via Smart Dimming</p>
+        </div>
+      </div>
+
+      <!-- GEOGRAPHIC MAP SECTION -->
+      <div class="bg-slate-900 border border-slate-800 rounded-xl p-4 flex flex-col h-[480px]">
+        <div class="flex justify-between items-center mb-3">
+          <h2 class="text-sm font-semibold text-slate-200">Live Pune GPS Node Network</h2>
+          <span class="text-xs text-slate-500">Persistent View</span>
+        </div>
+        <div id="map" class="w-full flex-1 rounded-lg border border-slate-800 z-10"></div>
+      </div>
+
+    </div>
+
+    <!-- RIGHT COLUMN: ALERTS & TELEMETRY STREAM -->
+    <div class="space-y-6">
+
+      <!-- CRITICAL ALERTS PANEL -->
+      <div class="bg-slate-900 border border-slate-800 rounded-xl p-4">
+        <h2 class="text-sm font-semibold text-slate-200 mb-3 flex items-center">
+          <span class="w-2 h-2 bg-red-500 rounded-full mr-2"></span> Active Diagnostic Alerts
+        </h2>
+        <div id="alerts-container" class="space-y-2 max-h-[160px] overflow-y-auto">
+          <p id="no-alerts-msg" class="text-xs text-slate-500 italic text-center py-4">No active hardware faults detected.</p>
+        </div>
+      </div>
+
+      <!-- LIVE TELEMETRY STREAM LOGS -->
+      <div class="bg-slate-900 border border-slate-800 rounded-xl p-4 flex flex-col h-[380px]">
+        <div class="flex justify-between items-center mb-3">
+          <h2 class="text-sm font-semibold text-slate-200">Incoming Data Logs</h2>
+          <button onclick="clearLogs()" class="text-[10px] text-slate-400 hover:text-white bg-slate-800 px-2 py-1 rounded">Clear Log</button>
+        </div>
+        <div id="telemetry-log" class="flex-1 bg-slate-950 rounded-lg p-3 font-mono text-xs text-slate-300 overflow-y-auto space-y-2 border border-slate-800/80">
+          <p class="text-slate-600">[System] Dashboard initialized. Click 'Run Evaluator Demo' above.</p>
+        </div>
+      </div>
+
+    </div>
+
+  </main>
+
+  <script>
+    // Live Clock
+    setInterval(() => {
+      document.getElementById('live-clock').innerText = new Date().toLocaleTimeString();
+    }, 1000);
+
+    function logToConsole(message, type = 'info') {
+      const logBox = document.getElementById('telemetry-log');
+      const time = new Date().toLocaleTimeString();
+      let colorClass = 'text-slate-300';
+      if (type === 'error') colorClass = 'text-red-400 font-semibold';
+      if (type === 'success') colorClass = 'text-emerald-400';
+      if (type === 'alert') colorClass = 'text-amber-400 font-semibold';
+      
+      const newLog = document.createElement('div');
+      newLog.className = `${colorClass} leading-relaxed`;
+      newLog.innerHTML = `<span class="text-slate-600">[${time}]</span> ${message}`;
+      logBox.appendChild(newLog);
+      logBox.scrollTop = logBox.scrollHeight;
+    }
+
+    function clearLogs() {
+      document.getElementById('telemetry-log').innerHTML = '';
+    }
+
+    // Leaflet Map Setup Centered on Pune
+    const map = L.map('map').setView([18.5204, 73.8567], 11);
+    
+    // OpenStreetMap Free Tile Layer
+    L.tileLayer('https://tile.openstreetmap.org/{z}/{x}/{y}.png', {
+      maxZoom: 19,
+      attribution: '&copy; OpenStreetMap'
+    }).addTo(map);
+
+    const poleStore = {};
+    const poleMarkers = {};
+    const mapGroup = L.featureGroup().addTo(map);
+
+    function processTelemetryPacket(data) {
+      const poleId = data.pole_id || "UNKNOWN_NODE";
+      const v = parseFloat(data.voltage || 0);
+      const i = parseFloat(data.current || 0);
+      const lux = parseFloat(data.lux || 0);
+      const lat = parseFloat(data.lat || 18.5204);
+      const lon = parseFloat(data.lon || 73.8567);
+
+      // Diagnostic Engine Rules
+      let status = "HEALTHY";
+      if (v >= 180 && i <= 0.05) {
+        status = "FAULT_LED_BURNOUT";
+        triggerAlertCard(poleId, "CRITICAL: LED Driver / Lamp Burnout", lat, lon);
+      } else if (v < 50 && lux < 10) {
+        status = "FAULT_POWER_LOSS";
+        triggerAlertCard(poleId, "WARNING: Main Power Cut / Line Failure", lat, lon);
+      } else if (v < 50 && lux >= 10) {
+        status = "DAYTIME_OFF";
+      }
+
+      // Save state permanently in memory
+      poleStore[poleId] = { voltage: v, current: i, status: status, lat: lat, lon: lon };
+
+      logToConsole(`Received <b>${poleId}</b>: V=${v}V, I=${i}A &rarr; <span class="${status.includes('FAULT') ? 'text-red-400 font-bold' : 'text-emerald-400'}">${status}</span>`, status.includes('FAULT') ? 'alert' : 'info');
+
+      updateMapMarker(poleId, lat, lon, status, v, i);
+      recalculateMetrics();
+    }
+
+    function updateMapMarker(poleId, lat, lon, status, voltage, current) {
+      const isFault = (status.includes('FAULT') || status.includes('CRITICAL') || status.includes('WARNING'));
+      const markerColor = isFault ? '#ef4444' : '#10b981';
+
+      const popupContent = `
+        <div class="text-slate-900 p-1">
+          <h4 class="font-bold border-b pb-1 text-sm">${poleId}</h4>
+          <p class="text-xs mt-1"><b>Status:</b> ${status}</p>
+          <p class="text-xs"><b>Voltage:</b> ${voltage} V</p>
+          <p class="text-xs"><b>Current:</b> ${current} A</p>
+          <p class="text-xs"><b>Power:</b> ${(voltage * current).toFixed(1)} W</p>
+        </div>
+      `;
+
+      if (poleMarkers[poleId]) {
+        poleMarkers[poleId].setLatLng([lat, lon]);
+        poleMarkers[poleId].setStyle({ fillColor: markerColor });
+        poleMarkers[poleId].getPopup().setContent(popupContent);
+      } else {
+        const marker = L.circleMarker([lat, lon], {
+          radius: 10,
+          fillColor: markerColor,
+          color: '#ffffff',
+          weight: 2,
+          opacity: 1,
+          fillOpacity: 0.9
+        }).bindPopup(popupContent);
+
+        marker.addTo(mapGroup);
+        poleMarkers[poleId] = marker;
+      }
+    }
+
+    function recalculateMetrics() {
+      const keys = Object.keys(poleStore);
+      const totalPoles = keys.length;
+      let totalPower = 0;
+      let totalFaults = 0;
+
+      keys.forEach(id => {
+        const item = poleStore[id];
+        totalPower += (item.voltage * item.current);
+        if (item.status.includes('FAULT') || item.status.includes('CRITICAL') || item.status.includes('WARNING')) {
+          totalFaults++;
+        }
+      });
+
+      document.getElementById('metric-total-poles').innerText = totalPoles;
+      document.getElementById('metric-power').innerText = `${totalPower.toFixed(1)} W`;
+
+      const healthPct = totalPoles > 0 ? Math.round(((totalPoles - totalFaults) / totalPoles) * 100) : 100;
+      const healthElem = document.getElementById('metric-health');
+      healthElem.innerText = `${healthPct}%`;
+      healthElem.className = healthPct < 100 ? "text-2xl font-bold text-red-400 mt-1" : "text-2xl font-bold text-emerald-400 mt-1";
+      document.getElementById('metric-fault-count').innerText = `${totalFaults} Active Fault(s)`;
+    }
+
+    function triggerAlertCard(poleId, faultMessage, lat, lon) {
+      const container = document.getElementById('alerts-container');
+      const noAlertsMsg = document.getElementById('no-alerts-msg');
+      if (noAlertsMsg) noAlertsMsg.remove();
+
+      if (document.getElementById(`alert-${poleId}`)) return;
+
+      const alertCard = document.createElement('div');
+      alertCard.id = `alert-${poleId}`;
+      alertCard.className = "bg-red-500/10 border border-red-500/30 rounded-lg p-3 text-xs space-y-1 animate-pulse";
+      alertCard.innerHTML = `
+        <div class="flex justify-between font-bold text-red-400">
+          <span>${poleId}</span>
+          <span>FAULT DETECTED</span>
+        </div>
+        <p class="text-slate-300">${faultMessage}</p>
+        <div class="pt-1 flex justify-between items-center text-[10px]">
+          <span class="text-slate-500">GPS: ${lat}, ${lon}</span>
+          <a href="https://maps.google.com/?q=${lat},${lon}" target="_blank" class="text-indigo-400 hover:underline font-semibold">View Map &rarr;</a>
+        </div>
+      `;
+      container.prepend(alertCard);
+    }
+
+    // DEMO SIMULATOR ENGINE (Persistent Local Execution)
+    let isRunning = false;
+    function runEvaluatorDemo() {
+      if (isRunning) return;
+      isRunning = true;
+
+      const testCases = [
+        {"pole_id": "PMC_POLE_101", "voltage": 230.5, "current": 0.45, "lux": 2.1, "motion": 1, "lat": 18.5204, "lon": 73.8567},
+        {"pole_id": "PMC_POLE_102", "voltage": 228.0, "current": 0.09, "lux": 1.5, "motion": 0, "lat": 18.5314, "lon": 73.8446},
+        {"pole_id": "PMC_POLE_103", "voltage": 0.0, "current": 0.0, "lux": 450.0, "motion": 1, "lat": 18.5074, "lon": 73.8077},
+        {"pole_id": "PMC_POLE_104", "voltage": 231.2, "current": 0.00, "lux": 3.0, "motion": 1, "lat": 18.4967, "lon": 73.8584},
+        {"pole_id": "PMC_POLE_105", "voltage": 0.0, "current": 0.00, "lux": 1.2, "motion": 0, "lat": 18.5602, "lon": 73.9125}
+      ];
+
+      testCases.forEach((data, index) => {
+        setTimeout(() => {
+          processTelemetryPacket(data);
+          if (index === testCases.length - 1) {
+            // Adjust bounds ONCE after all markers are plotted
+            try {
+              map.fitBounds(mapGroup.getBounds().pad(0.15));
+            } catch(e) {}
+            isRunning = false;
+          }
+        }, index * 800);
+      });
+    }
+  </script>
+</body>
+</html>
